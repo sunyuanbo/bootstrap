@@ -1,6 +1,5 @@
 'use strict'
 
-const fs = require('fs')
 const path = require('path')
 const JSUnitSaucelabs = require('jsunitsaucelabs')
 
@@ -15,50 +14,66 @@ const jsUnitSaucelabs = new JSUnitSaucelabs({
   build:    process.env.TRAVIS_JOB_ID
 })
 
-const testURL = 'http://localhost:3000/js/tests/index.html?hidepassed'
-const browsersFile = path.join(__dirname, 'sauce_browsers.json')
+const testURL      = 'http://localhost:3000/js/tests/index.html?hidepassed'
+const browsersFile = require(path.resolve(__dirname, './sauce_browsers.json'))
+let jobsDone       = 0
+let jobsSuccess    = 0
 
-fs.readFile(browsersFile, 'utf8', function (err, data) {
-  if (err) {
-    throw err
+const waitingCallback = (error, body) => {
+  if (error) {
+    console.error(error)
+    return
   }
 
-  jsUnitSaucelabs.start([JSON.parse(data)], testURL, 'qunit', (error, success) => {
-    if (typeof success !== 'undefined') {
-      const taskIds = success['js tests']
+  if (typeof body !== 'undefined') {
+    if (!body.completed) {
+      setTimeout(() => {
+        jsUnitSaucelabs.getStatus(body.job_id, waitingCallback)
+      }, 2000)
+    } else {
+      const test = body['js tests'][0]
+      let passed = false
 
-      if (!taskIds || !taskIds.length) {
-        throw new Error('Error starting tests through SauceLabs API')
+      if (test.result !== null) {
+        passed = test.result.total === test.result.passed
       }
 
-      const waitingCallback = (error, success) => {
-        if (error) {
-          console.error(error)
-          return
-        }
+      console.log(`Tested ${testURL}`)
+      console.log(`Platform: ${test.platform.join(',')}`)
+      console.log(`Passed: ${passed.toString()}`)
+      console.log(`Url ${test.url}`)
 
-        if (typeof success !== 'undefined') {
-          if (!success.completed) {
-            jsUnitSaucelabs.getStatus(taskIds[0], waitingCallback)
-          } else {
-            const test = success['js tests'][0]
-            let passed = false
-
-            if (test.result !== null) {
-              passed = test.result.total === test.result.passed
-            }
-
-            console.log(`Tested ${testURL}`)
-            console.log(`Platform: ${test.platform.join(',')}`)
-            console.log(`Passed: ${passed.toString()}`)
-            console.log(`Url ${test.url}`)
-          }
-        }
+      if (passed) {
+        jobsSuccess++
       }
+      jobsDone++
 
-      taskIds.forEach((id) => {
-        jsUnitSaucelabs.getStatus(id, waitingCallback)
-      })
+      // Exit
+      if (jobsDone === browsersFile.length) {
+        jsUnitSaucelabs.stop()
+        process.exit(jobsDone === jobsSuccess ? 0 : 1)
+      }
     }
-  })
+  }
+}
+
+browsersFile.forEach((tmpBrowser) => {
+  setTimeout(() => {
+    const broPlatform = typeof tmpBrowser.platform === 'undefined' ? tmpBrowser.platformName : tmpBrowser.platform
+    jsUnitSaucelabs.start([[broPlatform, tmpBrowser.browserName, tmpBrowser.version]], testURL, 'qunit', (error, success) => {
+      if (typeof success !== 'undefined') {
+        const taskIds = success['js tests']
+
+        if (!taskIds || !taskIds.length) {
+          throw new Error('Error starting tests through SauceLabs API')
+        }
+
+        taskIds.forEach((id) => {
+          jsUnitSaucelabs.getStatus(id, waitingCallback)
+        })
+      } else {
+        console.error(error)
+      }
+    })
+  }, 1000)
 })
