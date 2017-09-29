@@ -19,16 +19,19 @@ const browsersFile = require(path.resolve(__dirname, './sauce_browsers.json'))
 let jobsDone       = 0
 let jobsSuccess    = 0
 
-const waitingCallback = (error, body) => {
+const waitingCallback = (error, body, id) => {
   if (error) {
     console.error(error)
+    process.exit(1)
     return
   }
 
   if (typeof body !== 'undefined') {
     if (!body.completed) {
       setTimeout(() => {
-        jsUnitSaucelabs.getStatus(body.job_id, waitingCallback)
+        jsUnitSaucelabs.getStatus(id, (error, body) => {
+          waitingCallback(error, body, id)
+        })
       }, 2000)
     } else {
       const test = body['js tests'][0]
@@ -58,22 +61,23 @@ const waitingCallback = (error, body) => {
 }
 
 browsersFile.forEach((tmpBrowser) => {
-  setTimeout(() => {
-    const broPlatform = typeof tmpBrowser.platform === 'undefined' ? tmpBrowser.platformName : tmpBrowser.platform
-    jsUnitSaucelabs.start([[broPlatform, tmpBrowser.browserName, tmpBrowser.version]], testURL, 'qunit', (error, success) => {
-      if (typeof success !== 'undefined') {
-        const taskIds = success['js tests']
+  const broPlatform = typeof tmpBrowser.platform === 'undefined' ? tmpBrowser.platformName : tmpBrowser.platform
+  const arrayBro    = [broPlatform, tmpBrowser.browserName, tmpBrowser.version]
+  jsUnitSaucelabs.start([arrayBro], testURL, 'qunit', (error, success) => {
+    if (typeof success !== 'undefined') {
+      const taskIds = success['js tests']
 
-        if (!taskIds || !taskIds.length) {
-          throw new Error('Error starting tests through SauceLabs API')
-        }
-
-        taskIds.forEach((id) => {
-          jsUnitSaucelabs.getStatus(id, waitingCallback)
-        })
-      } else {
-        console.error(error)
+      if (!taskIds || !taskIds.length) {
+        throw new Error('Error starting tests through SauceLabs API')
       }
-    })
-  }, 1000)
+
+      taskIds.forEach((id) => {
+        jsUnitSaucelabs.getStatus(id, (error, body) => {
+          waitingCallback(error, body, id)
+        })
+      })
+    } else {
+      console.error(error)
+    }
+  })
 })
